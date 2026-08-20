@@ -1,4 +1,5 @@
 .DS_Store
 .env
 *.pem
+*.key
 node_modules/

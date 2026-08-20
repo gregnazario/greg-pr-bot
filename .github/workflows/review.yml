@@ -1,9 +1,9 @@
-name: Review my pull requests
+name: Recover missed pull request reviews
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: "*/5 * * * *"
+    - cron: "17 * * * *"
 
 concurrency:
   group: greg-pr-bot

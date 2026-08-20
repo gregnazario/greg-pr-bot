@@ -1,13 +1,16 @@
 # greg-pr-bot
 
-A private, account-wide pull-request reviewer for `gregnazario`. It uses
+An open-source, account-wide pull-request reviewer for `gregnazario`. It uses
 [Pi](https://github.com/earendil-works/pi) as the coding harness. The default model is
 GLM-5.3 through a Z.AI Coding Plan subscription, and the model list is configurable.
 
-One central scheduled workflow discovers open PRs authored by `gregnazario` in every
-repository where the GitHub App is installed. It posts one persistent review comment
-and refreshes that comment whenever the PR head commit changes. No workflow file is
-needed in the repositories being reviewed.
+The bot is event driven. A single long-running server receives GitHub App webhooks and
+queues a review immediately when one of your PRs is opened, reopened, marked ready, or
+updated with new commits. No workflow file is needed in the repositories being reviewed.
+
+An hourly GitHub Actions scan remains as a recovery path for deliveries missed while the
+server is unavailable. The review marker makes both paths idempotent, so they do not post
+duplicate reviews for the same PR head and model configuration.
 
 ## What it reviews
 
@@ -16,72 +19,113 @@ needed in the repositories being reviewed.
 - Performance and scalability problems
 - Reliability, maintainability, and general code quality
 
-Draft PRs are skipped. Five new PR revisions are reviewed per run by default; the
-five-minute schedule picks up any remaining work on later runs.
+Draft PRs and PRs opened by other authors are skipped. Reviews run sequentially to avoid
+overloading the Coding Plan. If several events for one PR are waiting, only the newest is
+kept; the reviewer fetches the current PR state again before running Pi.
 
-## Setup
+## Run the server
 
-1. Create a private GitHub App owned by `gregnazario`.
-2. Disable webhooks and allow installation only on this account.
-3. Grant these repository permissions:
-   - Contents: read
-   - Issues: read and write
-   - Pull requests: read and write
-4. Install the App on all repositories, or select a smaller set.
-5. Add the App client ID as the repository variable `APP_CLIENT_ID`.
-6. Generate a private key and add its PEM contents as the repository secret
-   `APP_PRIVATE_KEY`.
-7. Add the Z.AI Coding Plan API key as the repository secret `ZAI_API_KEY`.
-8. Run **Review my pull requests** from the Actions tab once; after that it runs every
-   five minutes.
+Requirements: Docker with Compose, a public HTTPS endpoint, and the existing GitHub App
+credentials.
 
-To add future repositories, update the GitHub App installation and include them. No
-repository code change is needed.
+1. Copy `.env.example` to `.env`.
+2. Put the App client ID, base64-encoded private key, webhook secret, and Z.AI API key in
+   `.env`. Never commit this file.
+3. Start the service:
+
+   ```sh
+   docker compose up -d --build
+   ```
+
+4. Put an HTTPS reverse proxy in front of local port 3000. Its public webhook URL is:
+
+   ```text
+   https://ms.sed.fyi/github/webhook
+   ```
+
+5. In the GitHub App settings, enable webhooks, enter that URL and the exact same webhook
+   secret, then subscribe to **Pull request** events.
+6. Check `https://ms.sed.fyi/healthz`; it should return `{"ok":true,...}`.
+
+The Compose service restarts automatically, runs read-only as an unprivileged user, drops
+Linux capabilities, and exposes port 3000 on localhost by default for a reverse proxy.
+Set `BIND_ADDRESS=0.0.0.0` in `.env` only if the host firewall and TLS proxy require it;
+use `BIND_PORT` to change the host-side port.
+
+## GitHub App permissions
+
+Install the App on all repositories to review, or select a smaller set. It needs:
+
+- Contents: read
+- Issues: read and write
+- Pull requests: read and write
+
+To add future repositories, update the App installation. No repository code change is
+needed.
+
+The hourly recovery workflow also needs these settings in this repository:
+
+- Repository variable `APP_CLIENT_ID`
+- Repository secret `APP_PRIVATE_KEY`
+- Repository secret `ZAI_API_KEY`
+- Optional repository variable `PI_MODELS`
 
 ## Security model
 
-The workflow creates a short-lived installation token with only the permissions above.
-The controller uses that token to read PR diffs and update comments, but removes it from
-Pi's environment before starting GLM. Pi runs with tools, extensions, skills, context
-files, sessions, and project trust disabled. PR titles, descriptions, and diffs are
-therefore model input only and cannot execute commands or read runner secrets.
+Every webhook body is verified against `X-Hub-Signature-256` using HMAC-SHA256 and a
+constant-time comparison before it is parsed or queued. The server exchanges a short-lived,
+RS256-signed GitHub App JWT for an installation token and caches that token only in memory.
 
-The GitHub Actions dependencies and Pi version are pinned. Dependabot can be added later
-to keep those pins current through reviewed PRs.
+The controller can read PR diffs and update comments, but GitHub tokens, the App private
+key, and the webhook secret are removed from Pi's environment. Pi runs with tools,
+extensions, skills, context files, sessions, and project trust disabled. PR titles,
+descriptions, and diffs are model input only; they cannot execute commands or read server
+secrets.
 
-## Limits
-
-The App can review only repositories included in its installation. For PRs sent to a
-repository owned by someone else, that owner must install the App or use a separate
-per-repository workflow.
-
-Large diffs are capped at four million characters. A truncated review says so in the
-input metadata; split very large changes into smaller PRs for a better review.
+Secrets belong only in the server environment or GitHub encrypted secrets. `.env`, PEM,
+and key files are ignored by Git. `.env.example` contains placeholders only.
 
 ## Configuration
 
-The workflow accepts these variables:
-
 | Variable | Default | Purpose |
 | --- | ---: | --- |
+| `APP_CLIENT_ID` | required | GitHub App client ID (an App ID also works) |
+| `APP_PRIVATE_KEY_BASE64` | required | Base64-encoded GitHub App private key PEM |
+| `GITHUB_WEBHOOK_SECRET` | required | High-entropy webhook signing secret |
+| `ZAI_API_KEY` | required for default | Z.AI Coding Plan credential used by Pi |
 | `PI_MODELS` | `zai/glm-5.3:high` | Comma-separated `provider/model[:thinking]` reviewers |
 | `PR_AUTHOR` | `gregnazario` | Only review PRs opened by this GitHub user |
-| `MAX_REVIEWS_PER_RUN` | `5` | Bound subscription usage and workflow duration |
 | `MAX_DIFF_CHARS` | `4000000` | Maximum diff characters sent to each model |
+| `HOST` | `0.0.0.0` | Address inside the container |
+| `PORT` | `3000` | HTTP port |
+| `BIND_ADDRESS` | `127.0.0.1` | Docker Compose host binding |
+| `BIND_PORT` | `3000` | Docker Compose host-side port |
 
-Set the repository variable `PI_MODELS` to change or combine reviewers, for example:
+For example, multiple models can review each revision independently:
 
 ```text
-zai/glm-5.3:high,zai/glm-4.7:high
+PI_MODELS=zai/glm-5.3:high,zai/glm-4.7:high
 ```
 
-Each model runs independently through Pi and receives the same PR diff. Their findings
-are grouped in one bot comment. Changing `PI_MODELS` changes the review configuration
-fingerprint, so existing open PRs are reviewed again even when their head SHA is
-unchanged.
+Changing `PI_MODELS` changes the review fingerprint, so the recovery scan reviews existing
+open PRs again even if their head SHA is unchanged. Pi supports other providers; add only
+the corresponding API-key environment variable needed by each configured model.
 
-The workflow also forwards optional `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
-`OPENROUTER_API_KEY`, `GEMINI_API_KEY`, `XAI_API_KEY`, and `DEEPSEEK_API_KEY` repository
-secrets. Add only the secret required by each configured provider. Pi supports further
-providers; add their documented environment-variable secret to the workflow before
-selecting them.
+## Operations
+
+```sh
+docker compose ps
+docker compose logs -f greg-pr-bot
+docker compose pull
+docker compose up -d --build
+```
+
+The queue is intentionally in memory. GitHub retries failed webhook deliveries, and the
+hourly workflow reconciles open PRs after an outage. Large diffs are capped at four million
+characters; split very large changes into smaller PRs for more focused feedback.
+
+Run the test suite with Node.js 24 or newer:
+
+```sh
+npm test
+```
