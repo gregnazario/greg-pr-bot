@@ -6,7 +6,7 @@ on:
     - cron: "*/5 * * * *"
 
 concurrency:
-  group: glm-pr-reviewer
+  group: greg-pr-bot
   cancel-in-progress: false
 
 permissions:
@@ -44,6 +44,13 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          PI_MODELS: ${{ vars.PI_MODELS || 'zai/glm-5.3:high' }}
           PR_AUTHOR: gregnazario
           MAX_REVIEWS_PER_RUN: "5"
           PI_CODING_AGENT_DIR: ${{ runner.temp }}/pi-agent

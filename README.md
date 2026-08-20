@@ -1,8 +1,8 @@
-# GLM PR Reviewer
+# greg-pr-bot
 
 A private, account-wide pull-request reviewer for `gregnazario`. It uses
-[Pi](https://github.com/earendil-works/pi) as the coding harness and GLM-5.3 through a
-Z.AI Coding Plan subscription.
+[Pi](https://github.com/earendil-works/pi) as the coding harness. The default model is
+GLM-5.3 through a Z.AI Coding Plan subscription, and the model list is configurable.
 
 One central scheduled workflow discovers open PRs authored by `gregnazario` in every
 repository where the GitHub App is installed. It posts one persistent review comment
@@ -60,13 +60,28 @@ input metadata; split very large changes into smaller PRs for a better review.
 
 ## Configuration
 
-The workflow accepts these environment variables:
+The workflow accepts these variables:
 
 | Variable | Default | Purpose |
 | --- | ---: | --- |
+| `PI_MODELS` | `zai/glm-5.3:high` | Comma-separated `provider/model[:thinking]` reviewers |
 | `PR_AUTHOR` | `gregnazario` | Only review PRs opened by this GitHub user |
 | `MAX_REVIEWS_PER_RUN` | `5` | Bound subscription usage and workflow duration |
-| `MAX_DIFF_CHARS` | `4000000` | Maximum diff characters sent to GLM |
+| `MAX_DIFF_CHARS` | `4000000` | Maximum diff characters sent to each model |
 
-The implementation intentionally uses the Z.AI provider and model names directly:
-`--provider zai --model glm-5.3`.
+Set the repository variable `PI_MODELS` to change or combine reviewers, for example:
+
+```text
+zai/glm-5.3:high,zai/glm-4.7:high
+```
+
+Each model runs independently through Pi and receives the same PR diff. Their findings
+are grouped in one bot comment. Changing `PI_MODELS` changes the review configuration
+fingerprint, so existing open PRs are reviewed again even when their head SHA is
+unchanged.
+
+The workflow also forwards optional `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
+`OPENROUTER_API_KEY`, `GEMINI_API_KEY`, `XAI_API_KEY`, and `DEEPSEEK_API_KEY` repository
+secrets. Add only the secret required by each configured provider. Pi supports further
+providers; add their documented environment-variable secret to the workflow before
+selecting them.
